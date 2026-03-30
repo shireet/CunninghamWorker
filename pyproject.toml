@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cunninghamworker"
+version = "0.1.0"
+description = "Execution worker for interacting with target chatbots via Telegram MTProto protocol."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "telethon>=1.34.0,<2.0.0",
+    "aio-pika>=9.4.0,<10.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
+    "pydantic>=2.5.0,<3.0.0",
+    "pydantic-settings>=2.1.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0,<9.0.0",
+    "pytest-asyncio>=0.23.0,<1.0.0",
+]
+
+[project.scripts]
+cunningham-worker = "cunninghamworker.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
