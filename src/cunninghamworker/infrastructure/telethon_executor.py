@@ -33,12 +33,23 @@ class TelethonJobExecutor(IJobExecutor):
         self._semaphore = asyncio.Semaphore(settings.telegram_rate_limit)
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
+        self._active_sessions: set[str] = set()
 
     async def _get_session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._locks_lock:
             if session_id not in self._session_locks:
                 self._session_locks[session_id] = asyncio.Lock()
+                self._active_sessions.add(session_id)
             return self._session_locks[session_id]
+
+    async def cleanup_session_lock(self, session_id: str) -> None:
+        async with self._locks_lock:
+            self._session_locks.pop(session_id, None)
+            self._active_sessions.discard(session_id)
+            logger.debug("Cleaned up session lock for %s", session_id)
+
+    def get_active_session_count(self) -> int:
+        return len(self._active_sessions)
 
     async def start(self) -> None:
         await self._client.start(bot_token=None)
@@ -62,10 +73,23 @@ class TelethonJobExecutor(IJobExecutor):
                     return await self._execute_job(job)
 
         except FloodWaitError as e:
+            if e.seconds > 3600:
+                logger.critical("Account appears to be banned or severely rate limited (%s seconds). Stopping.", e.seconds)
+                raise TelegramError(f"Account likely banned: {e.seconds} seconds wait")
+            
             logger.warning("Rate limited, waiting %s seconds", e.seconds)
             raise TelegramError(f"Rate limited: {e.seconds} seconds") from e
 
+        except ConnectionError as e:
+            logger.critical("Connection error - possible account block: %s", e)
+            raise TelegramError(f"Connection error (possible block): {e}") from e
+
         except Exception as e:
+            error_str = str(e).lower()
+            if any(term in error_str for term in ["banned", "blocked", "deactivated", "auth key"]):
+                logger.critical("Critical Telegram error - account may be banned: %s", e)
+                raise TelegramError(f"Account likely banned/blocked: {e}") from e
+            
             logger.error("Telegram execution failed: %s", e)
             return ExecutionResult(
                 job_id=job.job_id,

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-
 from cunninghamworker.bll.exceptions import JobExecutionError
 from cunninghamworker.bll.interfaces import IJobExecutor, IResultReporter
 from cunninghamworker.domain.entities import ExecutionJob, ExecutionResult
@@ -23,6 +22,7 @@ class JobProcessor:
 
     async def process_job(self, job: ExecutionJob) -> None:
         attempt = 0
+        last_error = None
 
         while attempt < self._max_retries:
             try:
@@ -36,11 +36,13 @@ class JobProcessor:
                     logger.info("Job %s completed successfully", job.job_id)
                 else:
                     logger.warning("Job %s failed: %s", job.job_id, result.error_message)
+                    last_error = result.error_message
 
                 return
 
             except Exception as e:
                 attempt += 1
+                last_error = str(e)
                 logger.error("Job %s attempt %s failed: %s", job.job_id, attempt, e)
 
                 if attempt < self._max_retries:
@@ -55,6 +57,13 @@ class JobProcessor:
                             statement_id=job.statement_id,
                             bot_response=None,
                             success=False,
-                            error_message=f"Failed after {self._max_retries} attempts: {str(e)}",
+                            error_message=f"Failed after {self._max_retries} attempts: {last_error}",
                         )
+                    )
+                    await self._reporter.report_failed_job(
+                        job_id=job.job_id,
+                        session_id=job.session_id,
+                        statement_id=job.statement_id,
+                        error_message=last_error,
+                        attempt_count=attempt,
                     )

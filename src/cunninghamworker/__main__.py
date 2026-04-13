@@ -46,8 +46,9 @@ async def main() -> None:
         session_tracker = DBBackedSessionTracker(core_api_reporter=reporter)
 
         async def on_session_complete(session_id: str):
-            logger.info(f"Session {session_id} complete - notifying Core API")
+            logger.info("Session %s complete - notifying Core API", session_id)
             await reporter.report_session_complete(session_id)
+            await executor.cleanup_session_lock(session_id)
 
         session_tracker.set_session_complete_callback(on_session_complete)
 
