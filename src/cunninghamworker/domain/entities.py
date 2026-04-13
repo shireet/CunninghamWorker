@@ -10,6 +10,7 @@ class ExecutionJob:
     target_bot_username: str
     content: str
     max_retries: int = 3
+    total_jobs_in_session: int = 1
 
 
 @dataclass

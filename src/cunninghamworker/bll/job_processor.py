@@ -26,28 +26,28 @@ class JobProcessor:
 
         while attempt < self._max_retries:
             try:
-                logger.info(f"Processing job {job.job_id} (attempt {attempt + 1}/{self._max_retries})")
+                logger.info("Processing job %s (attempt %s/%s)", job.job_id, attempt + 1, self._max_retries)
 
                 result = await self._executor.execute(job)
 
                 await self._reporter.report_result(result)
 
                 if result.success:
-                    logger.info(f"Job {job.job_id} completed successfully")
+                    logger.info("Job %s completed successfully", job.job_id)
                 else:
-                    logger.warning(f"Job {job.job_id} failed: {result.error_message}")
+                    logger.warning("Job %s failed: %s", job.job_id, result.error_message)
 
                 return
 
             except Exception as e:
                 attempt += 1
-                logger.error(f"Job {job.job_id} attempt {attempt} failed: {e}")
+                logger.error("Job %s attempt %s failed: %s", job.job_id, attempt, e)
 
                 if attempt < self._max_retries:
-                    logger.info(f"Retrying job {job.job_id} in {self._retry_delay} seconds...")
+                    logger.info("Retrying job %s in %s seconds...", job.job_id, self._retry_delay)
                     await asyncio.sleep(self._retry_delay)
                 else:
-                    logger.error(f"Job {job.job_id} failed after {self._max_retries} attempts")
+                    logger.error("Job %s failed after %s attempts", job.job_id, self._max_retries)
                     await self._reporter.report_result(
                         ExecutionResult(
                             job_id=job.job_id,

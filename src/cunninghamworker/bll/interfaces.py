@@ -19,3 +19,7 @@ class IResultReporter(ABC):
     @abstractmethod
     async def report_result(self, result: ExecutionResult) -> None:
         pass
+
+    @abstractmethod
+    async def report_session_complete(self, session_id: str) -> None:
+        pass

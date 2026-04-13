@@ -4,6 +4,8 @@ import signal
 
 from cunninghamworker.bll.config import Settings
 from cunninghamworker.bll.job_processor import JobProcessor
+from cunninghamworker.bll.concurrent_job_pool import ConcurrentJobPool
+from cunninghamworker.bll.db_backed_session_tracker import DBBackedSessionTracker
 from cunninghamworker.infrastructure.core_api_reporter import CoreApiResultReporter
 from cunninghamworker.infrastructure.logging import configure_logging
 from cunninghamworker.infrastructure.rabbitmq_consumer import RabbitMqJobConsumer
@@ -41,27 +43,71 @@ async def main() -> None:
         await executor.start()
         await consumer.connect()
 
-        logger.info("Worker started, waiting for jobs...")
+        session_tracker = DBBackedSessionTracker(core_api_reporter=reporter)
+
+        async def on_session_complete(session_id: str):
+            logger.info(f"Session {session_id} complete - notifying Core API")
+            await reporter.report_session_complete(session_id)
+
+        session_tracker.set_session_complete_callback(on_session_complete)
+
+        job_pool = ConcurrentJobPool(
+            job_processor=processor,
+            session_tracker=session_tracker,
+            max_concurrent_jobs=settings.max_concurrent_jobs,
+            rate_limit_per_second=settings.telegram_rate_limit,
+        )
+
+        logger.info(
+            "Worker started with concurrent job processing "
+            "(max_concurrent=%s, rate_limit=%s/s, crash_recovery=enabled)",
+            settings.max_concurrent_jobs,
+            settings.telegram_rate_limit,
+        )
+
+        monitor_task = asyncio.create_task(
+            _monitor_pool(job_pool, shutdown_event)
+        )
 
         while not shutdown_event.is_set():
             job = await consumer.consume_job()
 
             if job is None:
-                await asyncio.sleep(1)
+                if job_pool.is_idle:
+                    await asyncio.sleep(1)
                 continue
 
-            await processor.process_job(job)
+            submitted = await job_pool.submit_job(job)
+            if not submitted:
+                logger.warning("Failed to submit job %s to pool", job.job_id)
+
+        logger.info("Waiting for active jobs to complete...")
+        await job_pool.wait_for_completion(timeout=30.0)
 
     except KeyboardInterrupt:
         logger.info("Worker interrupted")
     except Exception as e:
-        logger.exception(f"Worker error: {e}")
+        logger.exception("Worker error: %s", e)
     finally:
         logger.info("Shutting down worker...")
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
         await executor.stop()
         await consumer.disconnect()
         await reporter.close()
         logger.info("Worker stopped")
+
+
+async def _monitor_pool(job_pool: ConcurrentJobPool, shutdown_event: asyncio.Event) -> None:
+    while not shutdown_event.is_set():
+        await asyncio.sleep(30)
+        if not shutdown_event.is_set():
+            logger.info(
+                "Pool status: %s active jobs", job_pool.active_count
+            )
 
 
 def run_main() -> None:

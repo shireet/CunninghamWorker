@@ -2,6 +2,7 @@ import json
 import logging
 
 import aio_pika
+from aio_pika.exceptions import QueueEmpty
 
 from cunninghamworker.bll.config import Settings
 from cunninghamworker.bll.interfaces import IJobConsumer
@@ -40,7 +41,10 @@ class RabbitMqJobConsumer(IJobConsumer):
             durable=True,
         )
 
-        message = await queue.get(timeout=self._settings.worker_poll_timeout_seconds)
+        try:
+            message = await queue.get(timeout=self._settings.worker_poll_timeout_seconds)
+        except QueueEmpty:
+            return None
 
         if message is None:
             return None
@@ -55,7 +59,8 @@ class RabbitMqJobConsumer(IJobConsumer):
                     target_bot_username=data["target_bot_username"],
                     content=data["content"],
                     max_retries=data.get("max_retries", 3),
+                    total_jobs_in_session=data.get("total_jobs_in_session", 1),
                 )
             except Exception as e:
-                logger.error(f"Failed to parse job message: {e}")
+                logger.error("Failed to parse job message: %s", e)
                 return None

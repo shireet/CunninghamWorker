@@ -22,6 +22,8 @@ class Settings:
     worker_poll_timeout_seconds: int = 10
     max_retries: int = 3
     retry_delay_seconds: int = 5
+    max_concurrent_jobs: int = 10
+    telegram_rate_limit: int = 30
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,4 +46,6 @@ class Settings:
             worker_poll_timeout_seconds=int(os.getenv("WORKER_POLL_TIMEOUT_SECONDS", "10")),
             max_retries=int(os.getenv("MAX_RETRIES", "3")),
             retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "5")),
+            max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", "10")),
+            telegram_rate_limit=int(os.getenv("TELEGRAM_RATE_LIMIT", "30")),
         )
