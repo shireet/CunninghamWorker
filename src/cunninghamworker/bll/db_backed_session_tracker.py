@@ -49,7 +49,6 @@ class DBBackedSessionTracker:
 
             if pending_jobs == 0 and total_jobs > 0:
                 logger.info("Session %s was already complete in DB", session_id)
-                self._completed_sessions.add(session_id)
                 await self._trigger_session_complete(session_id)
                 return True
 
@@ -129,12 +128,12 @@ class DBBackedSessionTracker:
             return
 
         logger.info("Session %s fully complete! Triggering completion...", session_id)
-        self._completed_sessions.add(session_id)
 
         if self._on_session_complete:
             try:
                 logger.info("Calling session complete callback for %s", session_id)
                 await self._on_session_complete(session_id)
+                self._completed_sessions.add(session_id)
                 logger.info("Session %s completion callback executed successfully", session_id)
             except Exception as e:
                 logger.error("Session complete callback failed for %s: %s", session_id, e, exc_info=True)

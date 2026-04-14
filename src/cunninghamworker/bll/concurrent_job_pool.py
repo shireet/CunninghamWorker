@@ -32,7 +32,6 @@ class _TokenBucketRateLimiter:
                     self._tokens -= 1.0
                     return
 
-            # No token available, wait briefly and retry
             await asyncio.sleep(1.0 / self._rate)
 
 

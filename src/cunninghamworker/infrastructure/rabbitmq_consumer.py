@@ -49,7 +49,6 @@ class RabbitMqJobConsumer(IJobConsumer):
         if message is None:
             return None
 
-        # Parse before ACK — reject malformed messages back to queue
         try:
             data = json.loads(message.body.decode())
         except Exception as e:

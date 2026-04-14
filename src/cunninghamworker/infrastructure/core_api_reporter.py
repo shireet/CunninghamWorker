@@ -17,7 +17,7 @@ class CoreApiResultReporter(IResultReporter):
             timeout=settings.core_api_timeout_seconds,
         )
         self._max_retries = 3
-        self._retry_delay = 2  # seconds, doubled each retry
+        self._retry_delay = 2
 
     async def close(self) -> None:
         await self._client.aclose()
