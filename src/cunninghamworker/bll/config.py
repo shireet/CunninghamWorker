@@ -18,7 +18,7 @@ class Settings:
     rabbitmq_password: str = "guest"
     rabbitmq_queue_name: str = "execution_jobs"
     core_api_base_url: str = "http://localhost:8080"
-    core_api_timeout_seconds: int = 30
+    core_api_timeout_seconds: int = 120
     worker_poll_timeout_seconds: int = 10
     max_retries: int = 3
     retry_delay_seconds: int = 5
@@ -42,7 +42,7 @@ class Settings:
             rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
             rabbitmq_queue_name=os.getenv("RABBITMQ_QUEUE_NAME", "execution_jobs"),
             core_api_base_url=os.getenv("CORE_API_BASE_URL", "http://localhost:8080"),
-            core_api_timeout_seconds=int(os.getenv("CORE_API_TIMEOUT_SECONDS", "30")),
+            core_api_timeout_seconds=int(os.getenv("CORE_API_TIMEOUT_SECONDS", "120")),
             worker_poll_timeout_seconds=int(os.getenv("WORKER_POLL_TIMEOUT_SECONDS", "10")),
             max_retries=int(os.getenv("MAX_RETRIES", "3")),
             retry_delay_seconds=int(os.getenv("RETRY_DELAY_SECONDS", "5")),
