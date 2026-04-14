@@ -1,7 +1,20 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+try:
+    from dotenv import find_dotenv, load_dotenv
+except ModuleNotFoundError:
+    def find_dotenv(*args, **kwargs) -> str:
+        return ""
+
+    def load_dotenv(*args, **kwargs) -> bool:
+        return False
+
+
+def _load_dotenv() -> None:
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path=dotenv_path)
 
 
 @dataclass
@@ -27,7 +40,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        load_dotenv()
+        _load_dotenv()
 
         return cls(
             app_env=os.getenv("APP_ENV", "development"),
