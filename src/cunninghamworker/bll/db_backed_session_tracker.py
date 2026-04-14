@@ -15,6 +15,7 @@ class DBBackedSessionTracker:
         self._lock = asyncio.Lock()
         self._reporter = core_api_reporter
         self._completed_sessions: Set[str] = set()
+        self._completing_sessions: Set[str] = set()
 
     def set_session_complete_callback(self, callback: Callable) -> None:
         self._on_session_complete = callback
@@ -31,16 +32,17 @@ class DBBackedSessionTracker:
 
             if status.get("is_complete", False):
                 logger.info("Session %s is already complete in DB", session_id)
-                self._completed_sessions.add(session_id)
+                async with self._lock:
+                    self._completed_sessions.add(session_id)
                 return True
 
             total_jobs = status.get("totalJobs", 0)
             completed_job_ids = set(status.get("completedJobIds", []))
             pending_jobs = total_jobs - len(completed_job_ids)
 
-            self._total_jobs[session_id] = total_jobs
-
-            self._active_jobs[session_id] = set()
+            async with self._lock:
+                self._total_jobs[session_id] = total_jobs
+                self._active_jobs[session_id] = set()
 
             logger.info(
                 "Session %s rebuilt from DB: %s/%s completed, %s pending",
@@ -59,18 +61,24 @@ class DBBackedSessionTracker:
             return False
 
     async def register_session(self, session_id: str, job_id: str, total_jobs: int) -> None:
+        needs_rebuild = False
         async with self._lock:
             if session_id in self._completed_sessions:
                 logger.debug("Session %s already complete, skipping", session_id)
                 return
+            needs_rebuild = session_id not in self._total_jobs
 
-            if session_id not in self._total_jobs:
-                already_complete = await self.rebuild_from_db(session_id)
-                if already_complete:
-                    return
-                self._total_jobs[session_id] = total_jobs
-                logger.info("Session %s registered with %s total jobs", session_id, total_jobs)
+        if needs_rebuild:
+            already_complete = await self.rebuild_from_db(session_id)
+            if already_complete:
+                return
 
+        async with self._lock:
+            if session_id in self._completed_sessions:
+                logger.debug("Session %s completed while registering, skipping", session_id)
+                return
+
+            self._total_jobs.setdefault(session_id, total_jobs)
             self._active_jobs[session_id].add(job_id)
             logger.debug("Job %s registered for session %s", job_id, session_id)
 
@@ -85,57 +93,64 @@ class DBBackedSessionTracker:
                 return
 
             self._active_jobs[session_id].discard(job_id)
-
             remaining = len(self._active_jobs[session_id])
             total = self._total_jobs.get(session_id, 0)
 
-            try:
-                status = await self._reporter.get_session_status(session_id)
-                if status:
-                    completed = status.get("completedJobs", 0)
-                    failed = status.get("failedJobs", 0)
-                    total = status.get("totalJobs", self._total_jobs.get(session_id, 0))
-                    finished = completed + failed
-                    pending = total - finished
+        should_trigger = False
+        try:
+            status = await self._reporter.get_session_status(session_id)
+            if status:
+                completed = status.get("completedJobs", 0)
+                failed = status.get("failedJobs", 0)
+                total = status.get("totalJobs", total)
+                finished = completed + failed
+                pending = total - finished
 
-                    logger.info(
-                        "Job %s complete for session %s (DB: %s/%s done, %s remaining)",
-                        job_id, session_id, finished, total, pending
-                    )
+                logger.info(
+                    "Job %s complete for session %s (DB: %s/%s done, %s remaining)",
+                    job_id, session_id, finished, total, pending
+                )
 
-                    if pending <= 0 and finished > 0:
-                        logger.info("Session %s fully complete! (%s/%s jobs)", session_id, finished, total)
-                        await self._trigger_session_complete(session_id)
-                else:
-                    completed = total - remaining
-                    logger.info(
-                        "Job %s complete for session %s (memory: %s/%s done, %s remaining)",
-                        job_id, session_id, completed, total, remaining
-                    )
+                should_trigger = pending <= 0 and finished > 0
+            else:
+                completed = total - remaining
+                logger.info(
+                    "Job %s complete for session %s (memory: %s/%s done, %s remaining)",
+                    job_id, session_id, completed, total, remaining
+                )
 
-                    if remaining == 0 and total > 0:
-                        logger.info("Session %s fully complete! (%s/%s jobs)", session_id, total, total)
-                        await self._trigger_session_complete(session_id)
-            except Exception as e:
-                logger.error("Error checking session status for %s: %s", session_id, e)
-                if remaining == 0 and total > 0:
-                    logger.info("Session %s fully complete! (%s/%s jobs)", session_id, total, total)
-                    await self._trigger_session_complete(session_id)
+                should_trigger = remaining == 0 and total > 0
+        except Exception as e:
+            logger.error("Error checking session status for %s: %s", session_id, e)
+            should_trigger = remaining == 0 and total > 0
+
+        if should_trigger:
+            logger.info("Session %s fully complete!", session_id)
+            await self._trigger_session_complete(session_id)
 
     async def _trigger_session_complete(self, session_id: str) -> None:
-        if session_id in self._completed_sessions:
-            logger.debug("Session %s already marked complete", session_id)
-            return
+        async with self._lock:
+            if session_id in self._completed_sessions:
+                logger.debug("Session %s already marked complete", session_id)
+                return
+            if session_id in self._completing_sessions:
+                logger.debug("Session %s completion already in progress", session_id)
+                return
+            self._completing_sessions.add(session_id)
 
         logger.info("Session %s fully complete! Triggering completion...", session_id)
 
-        if self._on_session_complete:
-            try:
+        try:
+            if self._on_session_complete:
                 logger.info("Calling session complete callback for %s", session_id)
                 await self._on_session_complete(session_id)
-                self._completed_sessions.add(session_id)
+                async with self._lock:
+                    self._completed_sessions.add(session_id)
                 logger.info("Session %s completion callback executed successfully", session_id)
-            except Exception as e:
-                logger.error("Session complete callback failed for %s: %s", session_id, e, exc_info=True)
-        else:
-            logger.warning("No callback set for session completion %s", session_id)
+            else:
+                logger.warning("No callback set for session completion %s", session_id)
+        except Exception as e:
+            logger.error("Session complete callback failed for %s: %s", session_id, e, exc_info=True)
+        finally:
+            async with self._lock:
+                self._completing_sessions.discard(session_id)
