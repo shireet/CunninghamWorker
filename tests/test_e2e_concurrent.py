@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from cunninghamworker.domain.entities import ExecutionJob
-from cunninghamworker.bll.session_tracker import SessionTracker
+from cunninghamworker.bll.db_backed_session_tracker import DBBackedSessionTracker
 from cunninghamworker.bll.concurrent_job_pool import ConcurrentJobPool
 from cunninghamworker.bll.job_processor import JobProcessor
 
@@ -82,52 +82,52 @@ async def test_single_session_concurrent():
     # Setup components
     mock_executor = MockExecutor(delay=0.2)
     mock_reporter = MockReporter()
-    session_tracker = SessionTracker()
-    
+    session_tracker = DBBackedSessionTracker(mock_reporter)
+
     async def on_session_complete(session_id):
         await mock_reporter.report_session_complete(str(session_id))
-    
+
     session_tracker.set_session_complete_callback(on_session_complete)
-    
+
     job_processor = JobProcessor(
         job_executor=mock_executor,
         result_reporter=mock_reporter,
         max_retries=1,
         retry_delay_seconds=0,
     )
-    
+
     job_pool = ConcurrentJobPool(
         job_processor=job_processor,
         session_tracker=session_tracker,
         max_concurrent_jobs=10,
         rate_limit_per_second=30,
     )
-    
+
     # Submit all jobs concurrently
     print(f"Submitting {num_jobs} jobs concurrently...")
     submit_tasks = [job_pool.submit_job(job) for job in jobs]
     results = await asyncio.gather(*submit_tasks)
-    
+
     assert all(results), "All jobs should be submitted successfully"
     print(f"✅ All {num_jobs} jobs submitted")
-    
+
     # Wait for all jobs to complete
     print("Waiting for jobs to complete...")
     await asyncio.sleep(2)  # Give time for processing
-    
+
     # Verify results
     assert mock_executor.execution_count == num_jobs, \
         f"Expected {num_jobs} executions, got {mock_executor.execution_count}"
     print(f"✅ All {num_jobs} jobs executed")
-    
+
     assert len(mock_reporter.results_reported) == num_jobs, \
         f"Expected {num_jobs} results reported, got {len(mock_reporter.results_reported)}"
     print(f"✅ All {num_jobs} results reported")
-    
+
     assert len(mock_reporter.sessions_completed) == 1, \
         f"Expected 1 session completion, got {len(mock_reporter.sessions_completed)}"
     print(f"✅ Session completion callback triggered")
-    
+
     print("\n✅ TEST 1 PASSED: Single session concurrent processing works!")
     return True
 
@@ -137,17 +137,17 @@ async def test_multiple_sessions_concurrent():
     print("\n" + "="*80)
     print("TEST 2: Multiple Sessions - Concurrent User Testing")
     print("="*80)
-    
+
     # Create 3 sessions with different job counts
     sessions = {
         uuid.uuid4(): 3,  # User A: 3 jobs
         uuid.uuid4(): 5,  # User B: 5 jobs
         uuid.uuid4(): 2,  # User C: 2 jobs
     }
-    
+
     total_jobs = sum(sessions.values())
     all_jobs = []
-    
+
     for session_id, num_jobs in sessions.items():
         jobs = [
             ExecutionJob(
@@ -163,13 +163,13 @@ async def test_multiple_sessions_concurrent():
         ]
         all_jobs.extend(jobs)
         print(f"Session {session_id}: {num_jobs} jobs")
-    
+
     print(f"Total: {len(all_jobs)} jobs across {len(sessions)} sessions")
-    
+
     # Setup
     mock_executor = MockExecutor(delay=0.1)
     mock_reporter = MockReporter()
-    session_tracker = SessionTracker()
+    session_tracker = DBBackedSessionTracker(mock_reporter)
     
     async def on_session_complete(session_id):
         await mock_reporter.report_session_complete(session_id)
@@ -264,8 +264,8 @@ async def test_session_completion_order():
     
     mock_executor = MockExecutor(delay=0.1)
     mock_reporter = MockReporter()
-    session_tracker = SessionTracker()
-    
+    session_tracker = DBBackedSessionTracker(mock_reporter)
+
     completion_order = []
     
     async def on_session_complete(session_id):
@@ -362,27 +362,27 @@ async def test_failed_jobs_still_complete_session():
     
     mock_executor = FailingExecutor()
     mock_reporter = MockReporter()
-    session_tracker = SessionTracker()
-    
+    session_tracker = DBBackedSessionTracker(mock_reporter)
+
     async def on_session_complete(session_id):
         await mock_reporter.report_session_complete(str(session_id))
-    
+
     session_tracker.set_session_complete_callback(on_session_complete)
-    
+
     job_processor = JobProcessor(
         job_executor=mock_executor,
         result_reporter=mock_reporter,
         max_retries=1,
         retry_delay_seconds=0,
     )
-    
+
     job_pool = ConcurrentJobPool(
         job_processor=job_processor,
         session_tracker=session_tracker,
         max_concurrent_jobs=10,
         rate_limit_per_second=30,
     )
-    
+
     print("Submitting 4 jobs (some will fail)...")
     submit_tasks = [job_pool.submit_job(job) for job in jobs]
     await asyncio.gather(*submit_tasks)

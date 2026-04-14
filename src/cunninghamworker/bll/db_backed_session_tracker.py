@@ -140,23 +140,3 @@ class DBBackedSessionTracker:
                 logger.error("Session complete callback failed for %s: %s", session_id, e, exc_info=True)
         else:
             logger.warning("No callback set for session completion %s", session_id)
-
-    async def get_session_status(self, session_id: str) -> dict:
-        async with self._lock:
-            total = self._total_jobs.get(session_id, 0)
-            remaining = len(self._active_jobs.get(session_id, set()))
-            completed = total - remaining
-
-            return {
-                "session_id": session_id,
-                "total_jobs": total,
-                "completed_jobs": completed,
-                "remaining_jobs": remaining,
-                "is_complete": session_id in self._completed_sessions,
-            }
-
-    async def cleanup_session(self, session_id: str) -> None:
-        async with self._lock:
-            self._active_jobs.pop(session_id, None)
-            self._total_jobs.pop(session_id, None)
-            logger.info("Session %s cleaned up from tracker", session_id)

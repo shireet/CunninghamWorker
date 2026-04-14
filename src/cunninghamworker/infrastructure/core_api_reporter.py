@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -15,38 +16,48 @@ class CoreApiResultReporter(IResultReporter):
             base_url=settings.core_api_base_url,
             timeout=settings.core_api_timeout_seconds,
         )
+        self._max_retries = 3
+        self._retry_delay = 2  # seconds, doubled each retry
 
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def _retry_post(self, url: str, json: dict, operation: str) -> None:
+        last_error = None
+        delay = self._retry_delay
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                response = await self._client.post(url, json=json)
+                response.raise_for_status()
+                logger.info("%s: HTTP %s", operation, response.status_code)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < self._max_retries:
+                    logger.warning("%s attempt %d failed, retrying in %ds: %s",
+                                   operation, attempt, delay, e)
+                    await asyncio.sleep(delay)
+                    delay *= 2
+        raise RuntimeError(f"{operation} failed after {self._max_retries} attempts: {last_error}")
+
     async def report_result(self, result: ExecutionResult) -> None:
-        try:
-            await self._client.post(
-                "/api/v1/execution/exchange/complete",
-                json={
-                    "session_id": str(result.session_id),
-                    "statement_id": str(result.statement_id),
-                    "bot_response": result.bot_response,
-                },
-            )
-            logger.info("Reported result for job %s", result.job_id)
-        except Exception as e:
-            logger.error("Failed to report result: %s", e)
-            raise
+        await self._retry_post(
+            "/api/v1/execution/exchange/complete",
+            json={
+                "session_id": str(result.session_id),
+                "statement_id": str(result.statement_id),
+                "bot_response": result.bot_response,
+            },
+            operation=f"Report result for job {result.job_id}",
+        )
 
     async def report_session_complete(self, session_id: str) -> None:
-        try:
-            logger.info("Reporting session %s as complete", session_id)
-            response = await self._client.post(
-                "/api/v1/execution/session/complete",
-                json={
-                    "session_id": session_id,
-                },
-            )
-            logger.info("Session %s marked as complete: %s", session_id, response.status_code)
-        except Exception as e:
-            logger.error("Failed to report session complete: %s", e)
-            raise
+        logger.info("Reporting session %s as complete", session_id)
+        await self._retry_post(
+            "/api/v1/execution/session/complete",
+            json={"session_id": session_id},
+            operation=f"Report session {session_id} complete",
+        )
 
     async def get_session_status(self, session_id: str) -> dict | None:
         try:
@@ -65,24 +76,3 @@ class CoreApiResultReporter(IResultReporter):
         except Exception as e:
             logger.error("Failed to get session status: %s", e)
             return None
-
-    async def mark_job_failed(
-        self,
-        job_id: str,
-        error_message: str,
-        reason: str,
-        attempt_count: int,
-    ) -> None:
-        try:
-            logger.info("Marking job %s as failed with reason: %s", job_id, reason)
-            response = await self._client.post(
-                f"/api/v1/execution/jobs/{job_id}/fail",
-                json={
-                    "error_message": error_message,
-                    "reason": reason,
-                    "attempt_count": attempt_count,
-                },
-            )
-            logger.info("Job %s marked as failed: %s", job_id, response.status_code)
-        except Exception as e:
-            logger.error("Failed to mark job as failed: %s", e)

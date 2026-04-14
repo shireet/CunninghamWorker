@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Dict, Set
 
 from cunninghamworker.bll.job_processor import JobProcessor
@@ -7,6 +8,32 @@ from cunninghamworker.bll.db_backed_session_tracker import DBBackedSessionTracke
 from cunninghamworker.domain.entities import ExecutionJob
 
 logger = logging.getLogger(__name__)
+
+
+class _TokenBucketRateLimiter:
+    """Token bucket rate limiter for per-second rate limiting."""
+
+    def __init__(self, rate: int) -> None:
+        self._rate = rate
+        self._tokens = float(rate)
+        self._max_tokens = float(rate)
+        self._last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last_refill
+                self._tokens = min(self._max_tokens, self._tokens + elapsed * self._rate)
+                self._last_refill = now
+
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+
+            # No token available, wait briefly and retry
+            await asyncio.sleep(1.0 / self._rate)
 
 
 class ConcurrentJobPool:
@@ -22,7 +49,7 @@ class ConcurrentJobPool:
         self._session_tracker = session_tracker
         self._max_concurrent_jobs = max_concurrent_jobs
         self._semaphore = asyncio.Semaphore(max_concurrent_jobs)
-        self._rate_limiter = asyncio.Semaphore(rate_limit_per_second)
+        self._rate_limiter = _TokenBucketRateLimiter(rate_limit_per_second)
         self._active_tasks: Dict[str, asyncio.Task] = {}
         self._shutdown_event = asyncio.Event()
         self._task_counter = 0
@@ -58,27 +85,25 @@ class ConcurrentJobPool:
         )
 
         async with self._semaphore:
-            async with self._rate_limiter:
-                try:
-                    logger.info(
-                        "Executing job %s (pool: %s/%s)",
-                        job.job_id, len(self._active_tasks), self._max_concurrent_jobs
-                    )
-                    await self._job_processor.process_job(job)
-                    logger.info("Job %s completed successfully", job.job_id)
+            await self._rate_limiter.acquire()
+            try:
+                logger.info(
+                    "Executing job %s (pool: %s/%s)",
+                    job.job_id, len(self._active_tasks), self._max_concurrent_jobs
+                )
+                await self._job_processor.process_job(job)
+                logger.info("Job %s completed successfully", job.job_id)
 
-                    await self._session_tracker.mark_job_complete(
-                        session_id=str(job.session_id),
-                        job_id=job.job_id,
-                    )
-                except Exception as e:
-                    logger.error("Job %s failed with exception: %s", job.job_id, e)
-                    await self._session_tracker.mark_job_complete(
-                        session_id=str(job.session_id),
-                        job_id=job.job_id,
-                    )
-                finally:
-                    await asyncio.sleep(1.0 / 30)
+                await self._session_tracker.mark_job_complete(
+                    session_id=str(job.session_id),
+                    job_id=job.job_id,
+                )
+            except Exception as e:
+                logger.error("Job %s failed with exception: %s", job.job_id, e)
+                await self._session_tracker.mark_job_complete(
+                    session_id=str(job.session_id),
+                    job_id=job.job_id,
+                )
 
     async def wait_for_completion(self, timeout: float = None) -> bool:
         if not self._active_tasks:
@@ -110,7 +135,7 @@ class ConcurrentJobPool:
             )
             await self.wait_for_completion(timeout=timeout)
 
-        for job_id, task in self._active_tasks.items():
+        for job_id, task in list(self._active_tasks.items()):
             if not task.done():
                 logger.warning("Cancelling task %s", job_id)
                 task.cancel()

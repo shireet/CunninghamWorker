@@ -83,7 +83,7 @@ async def main() -> None:
                 logger.warning("Failed to submit job %s to pool", job.job_id)
 
         logger.info("Waiting for active jobs to complete...")
-        await job_pool.wait_for_completion(timeout=30.0)
+        await job_pool.shutdown(timeout=30.0)
 
     except KeyboardInterrupt:
         logger.info("Worker interrupted")
@@ -91,11 +91,12 @@ async def main() -> None:
         logger.exception("Worker error: %s", e)
     finally:
         logger.info("Shutting down worker...")
-        monitor_task.cancel()
-        try:
-            await monitor_task
-        except asyncio.CancelledError:
-            pass
+        if 'monitor_task' in locals():
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
         await executor.stop()
         await consumer.disconnect()
         await reporter.close()

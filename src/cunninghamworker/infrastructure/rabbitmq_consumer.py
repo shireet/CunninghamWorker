@@ -49,18 +49,21 @@ class RabbitMqJobConsumer(IJobConsumer):
         if message is None:
             return None
 
+        # Parse before ACK — reject malformed messages back to queue
+        try:
+            data = json.loads(message.body.decode())
+        except Exception as e:
+            logger.error("Failed to parse job message: %s", e)
+            await message.nack(requeue=True)
+            return None
+
         async with message.process():
-            try:
-                data = json.loads(message.body.decode())
-                return ExecutionJob(
-                    job_id=data["job_id"],
-                    session_id=data["session_id"],
-                    statement_id=data["statement_id"],
-                    target_bot_username=data["target_bot_username"],
-                    content=data["content"],
-                    max_retries=data.get("max_retries", 3),
-                    total_jobs_in_session=data.get("total_jobs_in_session", 1),
-                )
-            except Exception as e:
-                logger.error("Failed to parse job message: %s", e)
-                return None
+            return ExecutionJob(
+                job_id=data["job_id"],
+                session_id=data["session_id"],
+                statement_id=data["statement_id"],
+                target_bot_username=data["target_bot_username"],
+                content=data["content"],
+                max_retries=data.get("max_retries", 3),
+                total_jobs_in_session=data.get("total_jobs_in_session", 1),
+            )

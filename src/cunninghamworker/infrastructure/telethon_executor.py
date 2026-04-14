@@ -48,9 +48,6 @@ class TelethonJobExecutor(IJobExecutor):
             self._active_sessions.discard(session_id)
             logger.debug("Cleaned up session lock for %s", session_id)
 
-    def get_active_session_count(self) -> int:
-        return len(self._active_sessions)
-
     async def start(self) -> None:
         await self._client.start(bot_token=None)
         logger.info("Telegram client started")

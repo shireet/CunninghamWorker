@@ -23,13 +23,3 @@ class IResultReporter(ABC):
     @abstractmethod
     async def report_session_complete(self, session_id: str) -> None:
         pass
-
-    @abstractmethod
-    async def mark_job_failed(
-        self,
-        job_id: str,
-        error_message: str,
-        reason: str,
-        attempt_count: int,
-    ) -> None:
-        pass
