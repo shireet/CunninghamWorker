@@ -8,7 +8,7 @@ This service:
 - Consumes execution jobs from RabbitMQ
 - Sends messages to target bots using Telethon (MTProto)
 - Receives bot responses
-- Reports results back to the Core API
+- Publishes execution results and session completion notices back to RabbitMQ
 
 ## Quick Start
 
@@ -42,14 +42,15 @@ python -m cunninghamworker
 | `TELEGRAM_PHONE` | Phone number for auth | Yes |
 | `RABBITMQ_HOST` | RabbitMQ server host | Yes |
 | `RABBITMQ_QUEUE_NAME` | Queue to consume from | Yes |
-| `CORE_API_BASE_URL` | Core API endpoint | Yes |
+| `RABBITMQ_EXECUTION_RESULTS_QUEUE_NAME` | Queue for job results | Yes |
+| `RABBITMQ_SESSION_COMPLETED_QUEUE_NAME` | Queue for session completion notices | Yes |
 
 ## Architecture
 
 The worker follows DDD principles:
 - **Domain**: Execution job entities
 - **BLL**: Job processing logic
-- **Infrastructure**: Telethon client, RabbitMQ consumer
+- **Infrastructure**: Telethon client, RabbitMQ consumer/publisher
 - **Presentation**: None (background worker)
 
 ## License

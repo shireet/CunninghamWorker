@@ -43,7 +43,7 @@ async def main() -> None:
         await executor.start()
         await consumer.connect()
 
-        session_tracker = DBBackedSessionTracker(core_api_reporter=reporter)
+        session_tracker = DBBackedSessionTracker()
 
         async def on_session_complete(session_id: str):
             logger.info("Session %s complete - notifying Core API", session_id)

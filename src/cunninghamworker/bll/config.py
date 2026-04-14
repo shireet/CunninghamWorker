@@ -30,6 +30,8 @@ class Settings:
     rabbitmq_username: str = "guest"
     rabbitmq_password: str = "guest"
     rabbitmq_queue_name: str = "execution_jobs"
+    rabbitmq_execution_results_queue_name: str = "execution_results"
+    rabbitmq_session_completed_queue_name: str = "session_completed"
     core_api_base_url: str = "http://localhost:8080"
     core_api_timeout_seconds: int = 120
     worker_poll_timeout_seconds: int = 10
@@ -54,6 +56,8 @@ class Settings:
             rabbitmq_username=os.getenv("RABBITMQ_USERNAME", "guest"),
             rabbitmq_password=os.getenv("RABBITMQ_PASSWORD", "guest"),
             rabbitmq_queue_name=os.getenv("RABBITMQ_QUEUE_NAME", "execution_jobs"),
+            rabbitmq_execution_results_queue_name=os.getenv("RABBITMQ_EXECUTION_RESULTS_QUEUE_NAME", "execution_results"),
+            rabbitmq_session_completed_queue_name=os.getenv("RABBITMQ_SESSION_COMPLETED_QUEUE_NAME", "session_completed"),
             core_api_base_url=os.getenv("CORE_API_BASE_URL", "http://localhost:8080"),
             core_api_timeout_seconds=int(os.getenv("CORE_API_TIMEOUT_SECONDS", "120")),
             worker_poll_timeout_seconds=int(os.getenv("WORKER_POLL_TIMEOUT_SECONDS", "10")),

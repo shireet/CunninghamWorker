@@ -1,81 +1,27 @@
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, Set
+from typing import Awaitable, Callable, Dict, Set
 
 logger = logging.getLogger(__name__)
 
 
 class DBBackedSessionTracker:
-
-    def __init__(self, core_api_reporter) -> None:
+    def __init__(self) -> None:
         self._active_jobs: Dict[str, Set[str]] = defaultdict(set)
         self._total_jobs: Dict[str, int] = defaultdict(int)
-        self._on_session_complete: Callable | None = None
+        self._on_session_complete: Callable[[str], Awaitable[None]] | None = None
         self._lock = asyncio.Lock()
-        self._reporter = core_api_reporter
         self._completed_sessions: Set[str] = set()
         self._completing_sessions: Set[str] = set()
 
-    def set_session_complete_callback(self, callback: Callable) -> None:
+    def set_session_complete_callback(self, callback: Callable[[str], Awaitable[None]]) -> None:
         self._on_session_complete = callback
 
-    async def rebuild_from_db(self, session_id: str) -> bool:
-        try:
-            logger.info("Rebuilding session %s state from DB", session_id)
-
-            status = await self._reporter.get_session_status(session_id)
-
-            if status is None:
-                logger.error("Failed to get status for session %s", session_id)
-                return False
-
-            if status.get("is_complete", False):
-                logger.info("Session %s is already complete in DB", session_id)
-                async with self._lock:
-                    self._completed_sessions.add(session_id)
-                return True
-
-            total_jobs = status.get("totalJobs", 0)
-            completed_job_ids = set(status.get("completedJobIds", []))
-            pending_jobs = total_jobs - len(completed_job_ids)
-
-            async with self._lock:
-                self._total_jobs[session_id] = total_jobs
-                self._active_jobs[session_id] = set()
-
-            logger.info(
-                "Session %s rebuilt from DB: %s/%s completed, %s pending",
-                session_id, status.get('completedJobs', 0), total_jobs, pending_jobs
-            )
-
-            if pending_jobs == 0 and total_jobs > 0:
-                logger.info("Session %s was already complete in DB", session_id)
-                await self._trigger_session_complete(session_id)
-                return True
-
-            return False
-
-        except Exception as e:
-            logger.error("Failed to rebuild session %s from DB: %s", session_id, e)
-            return False
-
     async def register_session(self, session_id: str, job_id: str, total_jobs: int) -> None:
-        needs_rebuild = False
         async with self._lock:
             if session_id in self._completed_sessions:
                 logger.debug("Session %s already complete, skipping", session_id)
-                return
-            needs_rebuild = session_id not in self._total_jobs
-
-        if needs_rebuild:
-            already_complete = await self.rebuild_from_db(session_id)
-            if already_complete:
-                return
-
-        async with self._lock:
-            if session_id in self._completed_sessions:
-                logger.debug("Session %s completed while registering, skipping", session_id)
                 return
 
             self._total_jobs.setdefault(session_id, total_jobs)
@@ -96,35 +42,13 @@ class DBBackedSessionTracker:
             remaining = len(self._active_jobs[session_id])
             total = self._total_jobs.get(session_id, 0)
 
-        should_trigger = False
-        try:
-            status = await self._reporter.get_session_status(session_id)
-            if status:
-                completed = status.get("completedJobs", 0)
-                failed = status.get("failedJobs", 0)
-                total = status.get("totalJobs", total)
-                finished = completed + failed
-                pending = total - finished
+        completed = total - remaining
+        logger.info(
+            "Job %s complete for session %s (%s/%s done, %s remaining)",
+            job_id, session_id, completed, total, remaining,
+        )
 
-                logger.info(
-                    "Job %s complete for session %s (DB: %s/%s done, %s remaining)",
-                    job_id, session_id, finished, total, pending
-                )
-
-                should_trigger = pending <= 0 and finished > 0
-            else:
-                completed = total - remaining
-                logger.info(
-                    "Job %s complete for session %s (memory: %s/%s done, %s remaining)",
-                    job_id, session_id, completed, total, remaining
-                )
-
-                should_trigger = remaining == 0 and total > 0
-        except Exception as e:
-            logger.error("Error checking session status for %s: %s", session_id, e)
-            should_trigger = remaining == 0 and total > 0
-
-        if should_trigger:
+        if remaining == 0 and total > 0:
             logger.info("Session %s fully complete!", session_id)
             await self._trigger_session_complete(session_id)
 
@@ -138,19 +62,15 @@ class DBBackedSessionTracker:
                 return
             self._completing_sessions.add(session_id)
 
-        logger.info("Session %s fully complete! Triggering completion...", session_id)
-
         try:
             if self._on_session_complete:
-                logger.info("Calling session complete callback for %s", session_id)
                 await self._on_session_complete(session_id)
                 async with self._lock:
                     self._completed_sessions.add(session_id)
-                logger.info("Session %s completion callback executed successfully", session_id)
             else:
                 logger.warning("No callback set for session completion %s", session_id)
-        except Exception as e:
-            logger.error("Session complete callback failed for %s: %s", session_id, e, exc_info=True)
+        except Exception as exc:
+            logger.error("Session complete callback failed for %s: %s", session_id, exc, exc_info=True)
         finally:
             async with self._lock:
                 self._completing_sessions.discard(session_id)
