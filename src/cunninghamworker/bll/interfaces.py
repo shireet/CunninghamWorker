@@ -25,12 +25,11 @@ class IResultReporter(ABC):
         pass
 
     @abstractmethod
-    async def report_failed_job(
+    async def mark_job_failed(
         self,
         job_id: str,
-        session_id: str,
-        statement_id: str,
         error_message: str,
+        reason: str,
         attempt_count: int,
     ) -> None:
         pass

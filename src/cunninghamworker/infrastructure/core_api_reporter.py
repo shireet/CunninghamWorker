@@ -66,26 +66,23 @@ class CoreApiResultReporter(IResultReporter):
             logger.error("Failed to get session status: %s", e)
             return None
 
-    async def report_failed_job(
+    async def mark_job_failed(
         self,
         job_id: str,
-        session_id: str,
-        statement_id: str,
         error_message: str,
+        reason: str,
         attempt_count: int,
     ) -> None:
         try:
-            logger.info("Reporting failed job %s to dead letter queue", job_id)
-            await self._client.post(
-                "/api/v1/execution/jobs/failed",
+            logger.info("Marking job %s as failed with reason: %s", job_id, reason)
+            response = await self._client.post(
+                f"/api/v1/execution/jobs/{job_id}/fail",
                 json={
-                    "job_id": job_id,
-                    "session_id": session_id,
-                    "statement_id": statement_id,
                     "error_message": error_message,
+                    "reason": reason,
                     "attempt_count": attempt_count,
                 },
             )
-            logger.info("Failed job %s saved to dead letter queue", job_id)
+            logger.info("Job %s marked as failed: %s", job_id, response.status_code)
         except Exception as e:
-            logger.error("Failed to report failed job: %s", e)
+            logger.error("Failed to mark job as failed: %s", e)

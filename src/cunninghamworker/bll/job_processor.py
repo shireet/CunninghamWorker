@@ -23,6 +23,7 @@ class JobProcessor:
     async def process_job(self, job: ExecutionJob) -> None:
         attempt = 0
         last_error = None
+        failure_reason = "Unknown"
 
         while attempt < self._max_retries:
             try:
@@ -37,6 +38,7 @@ class JobProcessor:
                 else:
                     logger.warning("Job %s failed: %s", job.job_id, result.error_message)
                     last_error = result.error_message
+                    failure_reason = self._classify_failure_reason(result)
 
                 return
 
@@ -60,10 +62,25 @@ class JobProcessor:
                             error_message=f"Failed after {self._max_retries} attempts: {last_error}",
                         )
                     )
-                    await self._reporter.report_failed_job(
+                    await self._reporter.mark_job_failed(
                         job_id=job.job_id,
-                        session_id=job.session_id,
-                        statement_id=job.statement_id,
                         error_message=last_error,
+                        reason=failure_reason,
                         attempt_count=attempt,
                     )
+
+    def _classify_failure_reason(self, result: ExecutionResult) -> str:
+        if result.error_message is None:
+            return "Unknown"
+        error_lower = result.error_message.lower()
+        if "timeout" in error_lower:
+            return "BotTimeout"
+        if "rate" in error_lower or "limit" in error_lower:
+            return "RateLimited"
+        if "banned" in error_lower or "blocked" in error_lower:
+            return "AccountBanned"
+        if "deleted" in error_lower or "not found" in error_lower:
+            return "MessageDeleted"
+        if "telegram" in error_lower:
+            return "TelegramError"
+        return "MaxRetriesExceeded"
