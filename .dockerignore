@@ -1,0 +1,39 @@
+# Environment files (security)
+.env
+.env.*
+!.env.example
+
+# Python cache files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Documentation
+*.md
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+tests
+
+# Virtual environment
+venv
+.venv
+env
+
+# OS files
+.DS_Store
+Thumbs.db
